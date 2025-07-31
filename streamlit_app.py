@@ -1,24 +1,29 @@
-# streamlit_app.py
 import streamlit as st
 import yfinance as yf
-import pandas_ta as ta
 import pandas as pd
+import ta
+
+st.set_page_config(page_title="🔥 Breakout Scanner", layout="wide")
+st.title("🔥 Breakout-Ready Stock Scanner (EMA + Volume + MACD + RSI + BB Squeeze)")
 
 def is_ready_to_fire(df):
-    df['EMA10'] = ta.ema(df['Close'], 10)
-    df['EMA20'] = ta.ema(df['Close'], 20)
-    df['EMA50'] = ta.ema(df['Close'], 50)
-    df['EMA100'] = ta.ema(df['Close'], 100)
-    df['EMA200'] = ta.ema(df['Close'], 200)
-    macd = ta.macd(df['Close'])
-    df['MACD'] = macd['MACD_12_26_9']
-    df['MACD_signal'] = macd['MACDs_12_26_9']
-    df['RSI'] = ta.rsi(df['Close'], 14)
-    bb = ta.bbands(df['Close'], length=20)
-    df['BB_upper'] = bb['BBU_20_2.0']
-    df['BB_lower'] = bb['BBL_20_2.0']
+    df['EMA10'] = ta.trend.ema_indicator(df['Close'], window=10)
+    df['EMA20'] = ta.trend.ema_indicator(df['Close'], window=20)
+    df['EMA50'] = ta.trend.ema_indicator(df['Close'], window=50)
+    df['EMA100'] = ta.trend.ema_indicator(df['Close'], window=100)
+    df['EMA200'] = ta.trend.ema_indicator(df['Close'], window=200)
+
+    macd = ta.trend.MACD(df['Close'])
+    df['MACD'] = macd.macd()
+    df['MACD_signal'] = macd.macd_signal()
+
+    df['RSI'] = ta.momentum.RSIIndicator(df['Close']).rsi()
+
+    bb = ta.volatility.BollingerBands(df['Close'], window=20, window_dev=2)
+    df['BB_upper'] = bb.bollinger_hband()
+    df['BB_lower'] = bb.bollinger_lband()
     df['BB_width'] = df['BB_upper'] - df['BB_lower']
-    df['VolAvg10'] = df['Volume'].rolling(10).mean()
+    df['Volume_Avg10'] = df['Volume'].rolling(10).mean()
 
     last = df.iloc[-1]
     emas = [last['EMA10'], last['EMA20'], last['EMA50'], last['EMA100'], last['EMA200']]
@@ -28,19 +33,15 @@ def is_ready_to_fire(df):
     return all([
         (max_ema - min_ema) / min_ema < 0.02,
         abs(last['Close'] - last['EMA50']) / last['Close'] < 0.01,
-        last['Volume'] > 1.5 * last['VolAvg10'],
+        last['Volume'] > 1.5 * last['Volume_Avg10'],
         last['MACD'] > last['MACD_signal'],
         last['RSI'] > 55,
         last['BB_width'] < df['BB_width'].rolling(20).min().iloc[-1] * 1.1
     ])
 
-# --- Streamlit App ---
-st.set_page_config(page_title="🔥 Breakout Scanner", layout="wide")
-st.title("🔥 Breakout-Ready Stock Scanner (EMA + Volume + MACD + RSI + BB Squeeze)")
-
+# UI
 stock_input = st.text_area("Enter comma-separated NSE symbols (e.g., RELIANCE.NS, INFY.NS)", value="RELIANCE.NS, TCS.NS, INFY.NS")
 symbols = [x.strip() for x in stock_input.split(",") if x.strip()]
-
 results = []
 
 with st.spinner("Scanning..."):
@@ -50,11 +51,10 @@ with st.spinner("Scanning..."):
             if len(df) > 100 and is_ready_to_fire(df):
                 results.append(symbol)
         except Exception as e:
-            st.warning(f"{symbol}: Failed to fetch or process. Error: {e}")
+            st.warning(f"{symbol}: Error - {e}")
 
 if results:
     st.success("🔥 These stocks are ready to fire:")
     st.table(pd.DataFrame(results, columns=["Symbol"]))
 else:
-    st.info("No breakout candidates found right now.")
-
+    st.info("No breakout candidates found at the moment.")

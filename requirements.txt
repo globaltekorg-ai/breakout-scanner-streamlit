@@ -1,4 +1,4 @@
-streamlit
-yfinance
-pandas
-pandas_ta @ git+https://github.com/twopirllc/pandas-ta
+streamlit==1.35.0
+pandas==2.2.2
+yfinance==0.2.38
+pandas-ta==0.3.14b0

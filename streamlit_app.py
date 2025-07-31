@@ -1,78 +1,68 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-from ta.trend import EMAIndicator, MACD
-from ta.momentum import RSIIndicator
-from ta.volatility import BollingerBands
+import ta
 
-st.set_page_config(page_title="Breakout Scanner", layout="wide")
-st.title("🔥 Breakout-Ready Stock Scanner (EMA + Volume + MACD + RSI + BB Squeeze)")
-
-symbols_input = st.text_input("Enter comma-separated NSE symbols (e.g., RELIANCE.NS, INFY.NS)", "RELIANCE.NS, TCS.NS, INFY.NS")
-symbols = [sym.strip().upper() for sym in symbols_input.split(',') if sym.strip()]
-
-result = []
-
-@st.cache_data(show_spinner=False)
-def get_data(symbol):
+def fetch_data(symbol, period="6mo", interval="1d"):
     try:
-        df = yf.download(symbol, period="6mo", interval="1d")
+        df = yf.download(symbol, period=period, interval=interval)
+        df.dropna(inplace=True)
         return df
     except Exception as e:
         return None
 
-def analyze_stock(symbol):
-    df = get_data(symbol)
-    if df is None or df.empty:
-        return f"{symbol}: Failed to fetch data."
+def analyze_stock(df):
+    close = df['Close']
+    volume = df['Volume']
 
-    df.dropna(inplace=True)
+    # Technical Indicators
+    df['EMA_10'] = ta.trend.ema_indicator(close, window=10)
+    df['EMA_20'] = ta.trend.ema_indicator(close, window=20)
+    df['EMA_50'] = ta.trend.ema_indicator(close, window=50)
+    df['EMA_100'] = ta.trend.ema_indicator(close, window=100)
+    df['EMA_200'] = ta.trend.ema_indicator(close, window=200)
+    df['MACD'] = ta.trend.macd(close)
+    df['MACD_signal'] = ta.trend.macd_signal(close)
+    df['RSI'] = ta.momentum.rsi(close)
+    bb = ta.volatility.BollingerBands(close)
+    df['BB_bbm'] = bb.bollinger_mavg()
+    df['BB_bbh'] = bb.bollinger_hband()
+    df['BB_bbl'] = bb.bollinger_lband()
 
-    try:
-        df['EMA_10'] = EMAIndicator(df['Close'], window=10).ema_indicator()
-        df['EMA_20'] = EMAIndicator(df['Close'], window=20).ema_indicator()
-        df['EMA_50'] = EMAIndicator(df['Close'], window=50).ema_indicator()
-        df['EMA_100'] = EMAIndicator(df['Close'], window=100).ema_indicator()
-        df['EMA_200'] = EMAIndicator(df['Close'], window=200).ema_indicator()
+    latest = df.iloc[-1]
 
-        macd = MACD(df['Close'])
-        df['MACD'] = macd.macd()
-        df['MACD_Signal'] = macd.macd_signal()
+    ema_tight = abs(latest['EMA_10'] - latest['EMA_200']) < latest['Close'] * 0.01
+    macd_cross = latest['MACD'] > latest['MACD_signal']
+    rsi_breakout = latest['RSI'] > 55
+    bb_squeeze = (latest['BB_bbh'] - latest['BB_bbl']) / latest['BB_bbm'] < 0.05
 
-        rsi = RSIIndicator(df['Close'])
-        df['RSI'] = rsi.rsi()
+    return ema_tight and macd_cross and rsi_breakout and bb_squeeze
 
-        bb = BollingerBands(df['Close'])
-        df['bb_bbm'] = bb.bollinger_mavg()
-        df['bb_bbh'] = bb.bollinger_hband()
-        df['bb_bbl'] = bb.bollinger_lband()
+st.set_page_config(page_title="Breakout Scanner", layout="centered")
+st.title("🔥 Breakout-Ready Stock Scanner (EMA + Volume + MACD + RSI + BB Squeeze)")
 
-        latest = df.iloc[-1]
+symbols = st.text_area("Enter comma-separated NSE symbols (e.g., RELIANCE.NS, INFY.NS)",
+                      value="RELIANCE.NS, TCS.NS, INFY.NS")
 
-        squeeze = latest['bb_bbh'] - latest['bb_bbl'] < (0.05 * latest['Close'])
-        rsi_break = latest['RSI'] > 50
-        macd_cross = latest['MACD'] > latest['MACD_Signal']
-        volume_surge = latest['Volume'] > df['Volume'].rolling(window=10).mean().iloc[-1]
+if symbols:
+    symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    st.markdown("---")
+    st.subheader("Scanner Output:")
 
-        emas = [latest['EMA_10'], latest['EMA_20'], latest['EMA_50'], latest['EMA_100'], latest['EMA_200']]
-        ema_converging = max(emas) - min(emas) < (0.03 * latest['Close'])
+    breakout_candidates = []
 
-        if all([squeeze, rsi_break, macd_cross, volume_surge, ema_converging]):
-            return f"✅ {symbol} is a breakout candidate!"
-        else:
-            return None
+    for sym in symbol_list:
+        try:
+            df = fetch_data(sym)
+            if df is not None:
+                if analyze_stock(df):
+                    breakout_candidates.append(sym)
+            else:
+                st.warning(f"{sym}: Failed to fetch data")
+        except Exception as e:
+            st.error(f"{sym}: Error - {e}")
 
-    except Exception as e:
-        return f"{symbol}: Error - {str(e)}"
-
-st.markdown("---")
-st.subheader("Scanner Output:")
-
-with st.spinner("Analyzing stocks..."):
-    for symbol in symbols:
-        result_str = analyze_stock(symbol)
-        if result_str:
-            st.success(result_str)
-
-if not any(analyze_stock(sym) for sym in symbols):
-    st.info("No breakout candidates found at the moment.")
+    if breakout_candidates:
+        st.success("\n".join(breakout_candidates))
+    else:
+        st.info("No breakout candidates found at the moment.")
